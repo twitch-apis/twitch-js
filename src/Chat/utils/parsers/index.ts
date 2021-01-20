@@ -104,13 +104,8 @@ export const base = (rawMessages: string, username = ''): BaseMessage[] => {
  * @see https://dev.twitch.tv/docs/irc/membership/#join-twitch-membership
  */
 export const joinMessage = (baseMessage: BaseMessage): JoinMessage => {
-  const [
-    ,
-    username,
-    ,
-    ,
-    channel,
-  ] = /:(.+)!(.+)@(.+).tmi.twitch.tv JOIN (#.+)/g.exec(baseMessage._raw)
+  const [, username, , , channel] =
+    /:(.+)!(.+)@(.+).tmi.twitch.tv JOIN (#.+)/g.exec(baseMessage._raw) || []
 
   return {
     ...baseMessage,
@@ -127,13 +122,8 @@ export const joinMessage = (baseMessage: BaseMessage): JoinMessage => {
  * @see https://dev.twitch.tv/docs/irc/membership/#part-twitch-membership
  */
 export const partMessage = (baseMessage: BaseMessage): PartMessage => {
-  const [
-    ,
-    username,
-    ,
-    ,
-    channel,
-  ] = /:(.+)!(.+)@(.+).tmi.twitch.tv PART (#.+)/g.exec(baseMessage._raw)
+  const [, username, , , channel] =
+    /:(.+)!(.+)@(.+).tmi.twitch.tv PART (#.+)/g.exec(baseMessage._raw) || []
 
   return {
     ...baseMessage,
@@ -149,12 +139,8 @@ export const partMessage = (baseMessage: BaseMessage): PartMessage => {
  * @see https://dev.twitch.tv/docs/irc/membership/#mode-twitch-membership
  */
 export const modeMessage = (baseMessage: BaseMessage): ModeMessages => {
-  const [
-    ,
-    channel,
-    mode,
-    username,
-  ] = /:[^\s]+ MODE (#[^\s]+) (-|\+)o ([^\s]+)/g.exec(baseMessage._raw)
+  const [, channel, mode, username] =
+    /:[^\s]+ MODE (#[^\s]+) (-|\+)o ([^\s]+)/g.exec(baseMessage._raw) || []
 
   const isModerator = mode === '+'
 
@@ -185,13 +171,8 @@ export const modeMessage = (baseMessage: BaseMessage): ModeMessages => {
  * @see https://dev.twitch.tv/docs/irc/membership/#names-twitch-membership
  */
 export const namesMessage = (baseMessage: BaseMessage): NamesMessage => {
-  const [
-    ,
-    ,
-    ,
-    channel,
-    names,
-  ] = /:(.+).tmi.twitch.tv 353 (.+) = (#.+) :(.+)/g.exec(baseMessage._raw)
+  const [, , , channel, names] =
+    /:(.+).tmi.twitch.tv 353 (.+) = (#.+) :(.+)/g.exec(baseMessage._raw) || []
 
   const namesV = names.split(' ')
 
@@ -215,7 +196,7 @@ export const namesEndMessage = (baseMessage: BaseMessage): NamesEndMessage => {
     ,
     channel,
     // message,
-  ] = /:(.+).tmi.twitch.tv 366 (.+) (#.+) :(.+)/g.exec(baseMessage._raw)
+  ] = /:(.+).tmi.twitch.tv 366 (.+) (#.+) :(.+)/g.exec(baseMessage._raw) || []
 
   return {
     ...baseMessage,
@@ -303,14 +284,10 @@ export const clearMessageMessage = (
 export const hostTargetMessage = (
   baseMessage: BaseMessage,
 ): HostTargetMessage => {
-  const [
-    ,
-    channel,
-    username,
-    numberOfViewers,
-  ] = /:tmi.twitch.tv HOSTTARGET (#[^\s]+) :([^\s]+)?\s?(\d+)?/g.exec(
-    baseMessage._raw,
-  )
+  const [, channel, username, numberOfViewers] =
+    /:tmi.twitch.tv HOSTTARGET (#[^\s]+) :([^\s]+)?\s?(\d+)?/g.exec(
+      baseMessage._raw,
+    ) || []
   const isStopped = username === '-'
 
   return {

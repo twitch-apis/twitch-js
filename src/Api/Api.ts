@@ -1,26 +1,26 @@
-import invariant from 'invariant'
-import isEmpty from 'lodash/isEmpty'
-import includes from 'lodash/includes'
-import toLower from 'lodash/toLower'
-import toUpper from 'lodash/toUpper'
+/// <reference types="ky" />
 
-import { ApiRootResponse, ApiVersions } from '../twitch'
+import ky from 'ky-universal'
+
+import camelCaseKeys from 'camelcase-keys'
 
 import createLogger, { Logger } from '../utils/logger'
-import fetchUtil, { FetchError } from '../utils/fetch'
-
 import * as validators from './utils/validators'
 
-import {
-  ApiOptions,
-  ApiReadyStates,
-  ApiFetchOptions,
-  Settings,
-  ApiHeaders,
-} from './types'
+import { ApiOptions } from './types'
+import { Settings } from './constants'
 
 /**
- * Make requests to Twitch API.
+ * @see https://github.com/sindresorhus/ky/tree/v0.26.0#readme
+ */
+type Ky = typeof ky
+
+/**
+ * Make requests to Twitch Helix API.
+ *
+ * The API client is a simple wrapper around [[`Ky`]] that handles request
+ * headers, retries, and token refreshes. For additional options, see
+ * [Ky documentation](https://github.com/sindresorhus/ky/tree/v0.26.0#readme).
  *
  * ## Initializing
  *
@@ -38,245 +38,170 @@ import {
  *
  * ## Making requests
  *
- * By default, the API client makes requests to the
- * [Helix API](https://dev.twitch.tv/docs/api), and exposes [[Api.get]],
- * [[Api.post]] and [[Api.put]] methods. Query string parameters and body
- * parameters are provided via `options.search` and `options.body` properties,
- * respectively.
+ * The API client makes requests to the
+ * [Helix API](https://dev.twitch.tv/docs/api). To make requests to the
+ * [Kraken/v5 API](https://dev.twitch.tv/docs/v5), use [[`Api.kraken`]].
  *
- * To make requests to the [Kraken/v5 API](https://dev.twitch.tv/docs/v5), use
- * `options.version = 'kraken'`
+ * @example Get streams
+ * ```js
+ * api('streams', { searchParams: { first: 20 } })
+ *   .json()
+ *   .then(response => {
+ *     // Do stuff with response ...
+ *   })
+ * ```
  *
- * ### Examples
+ * @example Start commercial
+ * ```js
+ * api('channels/commercial', {
+ *   method: 'post',
+ *   json: { broadcaster_id: '41245072', length: 60 },
+ * })
+ *   .json()
+ *   .then(response => {
+ *     // Do stuff with response ...
+ *   })
+ * ```
  *
- * #### Get bits leaderboard
+ * @example Create clip
  * ```js
  * api
- *   .get('bits/leaderboard', { search: { user_id: '44322889' } })
- *   .then(response => {
- *     // Do stuff with response ...
- *   })
- * ```
- *
- * #### Get the latest Overwatch live streams
- * ```
- * api
- *   .get('streams', { version: 'kraken', search: { game: 'Overwatch' } })
- *   .then(response => {
- *     // Do stuff with response ...
- *   })
- * ```
- *
- * #### Start a channel commercial
- * ```
- * const channelId = '44322889'
- * api
- *   .post(`channels/${channelId}/commercial`, {
- *     version: 'kraken',
- *     body: { length: 30 },
- *   })
+ *   .post('clips', { searchParams: { broadcaster_id: '44322889' } })
+ *   .json()
  *   .then(response => {
  *     // Do stuff with response ...
  *   })
  * ```
  */
-
+interface Api extends Ky {}
 class Api {
-  private _options: ApiOptions
-  private _log: Logger
+  private options: ApiOptions
+  private log: Logger
+  private api: Ky
 
-  private _readyState: ApiReadyStates = ApiReadyStates.READY
-
-  private _status!: ApiRootResponse
+  /**
+   * Make API request to Kraken API.
+   *
+   * @example Get the latest Overwatch live streams
+   * ```
+   * api
+   *   .kraken
+   *   .get('streams', { searchParams: { game: 'Overwatch' } })
+   *   .json()
+   *   .then(response => {
+   *     // Do stuff with response ...
+   *   })
+   * ```
+   *
+   * @example Start a channel commercial
+   * ```
+   * const channelId = '44322889'
+   * api
+   *   .kraken
+   *   .post(`channels/${channelId}/commercial`, { json: { length: 30 } })
+   *   .json()
+   *   .then(response => {
+   *     // Do stuff with response ...
+   *   })
+   * ```
+   */
+  public kraken: Ky
 
   constructor(options: Partial<ApiOptions>) {
-    this._options = validators.apiOptions(options)
+    this.options = validators.apiOptions(options)
 
-    this._log = createLogger({ name: 'Api', ...this._options.log })
-  }
+    this.log = createLogger({ name: 'Api', ...this.options.log })
 
-  get readyState() {
-    return this._readyState
-  }
+    // Create Helix API client.
+    this.api = ky.create({
+      prefixUrl: Settings.Helix.BaseUrl,
+      hooks: {
+        beforeRequest: [
+          // Log requests.
+          (request) => {
+            this.log.debug(request, `Requesting ${request.url} ...`)
+          },
+          // Add headers.
+          (request) => {
+            const isKrakenRequest = request.url.startsWith(
+              Settings.Kraken.BaseUrl,
+            )
 
-  get status() {
-    return this._status
+            // Add Kraken headers.
+            if (isKrakenRequest) {
+              request.headers.set('Accept', 'application/vnd.twitchtv.v5+json')
+            }
+
+            // Add client ID header.
+            if (this.options.clientId) {
+              request.headers.set('Client-ID', this.options.clientId)
+            }
+
+            // Add token header.
+            if (this.options.token) {
+              const bearer = isKrakenRequest
+                ? Settings.Kraken.Bearer
+                : Settings.Helix.Bearer
+
+              request.headers.set(
+                'Authorization',
+                `${bearer} ${this.options.token}`,
+              )
+            }
+          },
+        ],
+        beforeRetry: [
+          // Log retries.
+          ({ request, error, retryCount }) => {
+            this.log.debug(error, `Retrying ${request.url} (${retryCount})`)
+          },
+        ],
+        afterResponse: [
+          // Log responses.
+          (request, _options, response) => {
+            if (!response.ok) {
+              this.log.error(response, `Request ${request.url} failed`)
+            } else {
+              this.log.debug(response, `Request ${request.url} completed`)
+            }
+          },
+          // Token refreshing.
+          async (request, _options, response) => {
+            if (
+              this.options.onAuthenticationFailure &&
+              response.status === 403
+            ) {
+              // Get a fresh token.
+              const token = await this.options.onAuthenticationFailure()
+              this.updateOptions({ token })
+              this.log.debug(`Token refreshed, retrying ${request.url} ...`)
+
+              const bearer = request.url.startsWith(Settings.Kraken.BaseUrl)
+                ? Settings.Kraken.Bearer
+                : Settings.Helix.Bearer
+
+              // Retry with the token.
+              request.headers.set('Authorization', `${bearer} ${token}`)
+
+              return ky(request)
+            }
+          },
+        ],
+      },
+      parseJson: (text) => camelCaseKeys(JSON.parse(text), { deep: true }),
+    })
+
+    // Create Kraken API client.
+    this.kraken = ky.extend({ prefixUrl: Settings.Kraken.BaseUrl })
+
+    return Object.assign(this.api, this)
   }
 
   /**
-   * New client options. To update `token` or `clientId`, use [**api.initialize()**]{@link Api#initialize}.
+   * Update API client options.
    */
   updateOptions(options: Partial<ApiOptions>) {
-    const { clientId, token } = this._options
-    this._options = validators.apiOptions({ ...options, clientId, token })
-  }
-
-  /**
-   * Initialize API client and retrieve status.
-   * @see https://dev.twitch.tv/docs/v5/#root-url
-   */
-  async initialize(newOptions?: Partial<ApiOptions>) {
-    if (newOptions) {
-      this._options = validators.apiOptions({ ...this._options, ...newOptions })
-    }
-
-    if (!newOptions && this.readyState === 2) {
-      return Promise.resolve()
-    }
-
-    const statusResponse = await this.get<ApiRootResponse>('', {
-      version: ApiVersions.Kraken,
-    })
-
-    if ('token' in statusResponse) {
-      this._readyState = ApiReadyStates.INITIALIZED
-      this._status = statusResponse
-    }
-
-    return statusResponse
-  }
-
-  /**
-   * Check if current credentials include `scope`.
-   * @see https://dev.twitch.tv/docs/authentication/#twitch-api-v5
-   */
-  hasScope(
-    /** Scope to check */
-    scope: string,
-  ): Promise<boolean> {
-    return new Promise((resolve, reject) => {
-      if (this.readyState !== 2 || !this.status) {
-        return reject(false)
-      }
-
-      return includes(this.status.token.authorization.scopes, scope)
-        ? resolve(true)
-        : reject(false)
-    })
-  }
-
-  /**
-   * GET endpoint.
-   *
-   * @example <caption>Get Live Overwatch Streams (Kraken)</caption>
-   * ```
-   * api.get('streams', { version: 'kraken', search: { game: 'Overwatch' } })
-   *   .then(response => {
-   *     // Do stuff with response ...
-   *   })
-   * ```
-   *
-   * @example <caption>Get user follows (Helix)</caption>
-   * ```
-   * api.get('users/follows', { search: { to_id: '23161357' } })
-   *   .then(response => {
-   *     // Do stuff with response ...
-   *   })
-   * ```
-   */
-  get<T = any>(endpoint = '', options?: ApiFetchOptions) {
-    return this._handleFetch<T>(endpoint, options)
-  }
-
-  /**
-   * POST endpoint.
-   */
-  post<T = any>(endpoint: string, options?: ApiFetchOptions) {
-    return this._handleFetch<T>(endpoint, { ...options, method: 'post' })
-  }
-
-  /**
-   * PUT endpoint.
-   */
-  put<T = any>(endpoint: string, options?: ApiFetchOptions) {
-    return this._handleFetch<T>(endpoint, { ...options, method: 'put' })
-  }
-
-  private _isVersionHelix(version: ApiVersions) {
-    return toLower(version) === ApiVersions.Helix
-  }
-
-  private _getBaseUrl(version: ApiVersions) {
-    return Settings[version].baseUrl
-  }
-
-  private _getHeaders(version: ApiVersions): ApiHeaders {
-    const { clientId, token } = this._options
-
-    const isHelix = this._isVersionHelix(version)
-
-    const headers: ApiHeaders = {}
-
-    if (!isHelix) {
-      headers['Accept'] = 'application/vnd.twitchtv.v5+json'
-    }
-
-    if (clientId) {
-      headers['Client-ID'] = clientId
-    }
-
-    if (token) {
-      headers[
-        'Authorization'
-      ] = `${Settings[version].authorizationHeader} ${token}`
-    }
-
-    return headers
-  }
-
-  private async _handleFetch<T = any>(
-    maybeUrl = '',
-    options: ApiFetchOptions = {},
-  ) {
-    const { version = ApiVersions.Helix, ...fetchOptions } = options
-
-    const baseUrl = this._getBaseUrl(version)
-
-    const url = `${baseUrl}/${maybeUrl}`
-
-    const message = `${toUpper(fetchOptions.method) || 'GET'} ${url}`
-
-    const fetchProfiler = this._log.profile()
-
-    const headers = this._getHeaders(version)
-
-    const optionHeaders = Object.entries(fetchOptions.headers || {})
-
-    for (const [name, value] of optionHeaders) {
-      headers[String(name)] = value
-    }
-
-    const performRequest = () =>
-      fetchUtil<T>(url, {
-        ...fetchOptions,
-        headers,
-      })
-
-    let caughtError
-    try {
-      return await performRequest()
-    } catch (error) {
-      caughtError = error
-      if (
-        typeof this._options.onAuthenticationFailure === 'function' &&
-        error instanceof FetchError &&
-        error.status === 401
-      ) {
-        const token = await this._options.onAuthenticationFailure()
-
-        if (token) {
-          await this.initialize({ token })
-          this._log.info(`${message} ... re-initializing with new token`)
-        }
-
-        this._log.info(`${message} ... retrying`)
-
-        return await performRequest()
-      }
-      throw error
-    } finally {
-      fetchProfiler.done(message, caughtError)
-    }
+    this.options = validators.apiOptions(options)
   }
 }
 

@@ -115,23 +115,26 @@ refreshed token.
 #### Handling token refresh example
 
 ```js
-// Optionally, use fetchUtil to help.
-import fetchUtil from 'twitch-js/lib/utils/fetch'
+import { URLSearchParams } from 'url'
+import fetch from 'node-fetch'
 
 const refreshToken = 'eyJfaWQmNzMtNGCJ9%6VFV5LNrZFUj8oU231/3Aj'
 const clientId = 'fooid'
 const secret = 'barbazsecret'
 
+const searchParams = new URLSearchParams({
+  grant_type: 'refresh_token',
+  refresh_token: refreshToken,
+  client_id: clientId,
+  client_secret: clientSecret,
+})
+
 const onAuthenticationFailure = () =>
-  fetchUtil('https://id.twitch.tv/oauth2/token', {
+  fetch(`https://id.twitch.tv/oauth2/token${searchParams.toString()}`, {
     method: 'post',
-    search: {
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: clientId,
-      client_secret: clientSecret,
-    },
-  }).then((response) => response.accessToken)
+  })
+    .then((response) => response.json())
+    .then((json) => json.access_token)
 
 const token = 'cfabdegwdoklmawdzdo98xt2fo512y'
 const username = 'ronni'

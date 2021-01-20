@@ -298,7 +298,7 @@ class Chat extends EventEmitter<EventTypes> {
   /**
    * Reconnect to Twitch, providing new options to the client.
    */
-  async reconnect(options?: ChatOptions) {
+  async reconnect(options?: Partial<ChatOptions>) {
     if (options) {
       this._options = validators.chatOptions({ ...this._options, ...options })
     }
