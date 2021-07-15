@@ -7,6 +7,13 @@ export type ApiOptions = {
   token: string
   clientId?: string
   log?: LoggerOptions
+
+  /**
+   * Called when a 401: Unauthorized response is returned.
+   * Returns a `Promise` that must resolve with the refreshed token.
+   * Upon resolution, the original request (with original parameters) is repeated using the provided token.
+   * @see https://github.com/twitch-js/twitch-js#refreshing-tokens
+   */
   onAuthenticationFailure?: () => Promise<string>
 }
 
